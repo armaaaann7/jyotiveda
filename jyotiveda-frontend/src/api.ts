@@ -5,7 +5,6 @@ import type {
   Forecast,
   Topology,
   Fairness,
-  Budget,
   Simulation,
   Dispatch,
   Cycle,

@@ -12,23 +12,18 @@ import {
   Sparkles,
   Menu,
   ChevronDown,
-  Activity,
-  BatteryCharging,
-  Sun,
   MapPin,
   Play,
   Pause,
   Download,
   RefreshCw,
   Send,
-  CloudSun,
   Radio,
   ArrowUpRight,
   Loader2,
   CloudLightning,
-  Square,
 } from "lucide-react";
-import { request, ApiError, getApiBaseUrl, apiServices } from "./api";
+import { request, ApiError, getApiBaseUrl } from "./api";
 import type {
   Role,
   Fixture,
@@ -37,7 +32,6 @@ import type {
   Forecast,
   Topology,
   Fairness,
-  Budget,
   Simulation,
   Dispatch,
   Cycle,
@@ -51,7 +45,6 @@ import {
   ShieldView,
   DispatchLifecycle,
   EdgeResilience,
-  KpiTable,
   MarketSummary,
 } from "./loop";
 import {
@@ -276,7 +269,6 @@ export default function App() {
   });
   const rows = fleet.data?.transformers || [];
   const row = rows.find((r) => r.transformer_id === selected);
-  const sum = summary.data;
   const forecastData =
     fc.data?.demand.map((d, i) => ({
       time: clock(d.ts),
@@ -310,6 +302,11 @@ export default function App() {
     setNotice("");
   };
   const shockRunning = ["simulating", "cycling", "approving"].includes(shock.phase);
+  // On small screens the approval box can land below the fold: bring it into view once.
+  useEffect(() => {
+    if (shock.phase !== "awaiting") return;
+    document.querySelector(".approve-box")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [shock.phase]);
   useEffect(() => {
     if (!shockRunning) return;
     const t = setInterval(() => setTick((v) => v + 1), 100);
@@ -811,7 +808,11 @@ export default function App() {
           v: fmt(row.loading_pct),
           unit: "%",
           tone: row.loading_pct > 90 ? "bad" : row.loading_pct > 70 ? "warn" : undefined,
-          sub: `${fmt(row.net_import_kw)} kW import`,
+          sub:
+            row.net_import_kw > row.grid_cap_kw + 0.5
+              ? `${fmt(row.net_import_kw)} kW need · cap ${fmt(row.grid_cap_kw, 0)}`
+              : `${fmt(row.net_import_kw)} kW net import`,
+          title: "Loading = net import need ÷ transformer rating (live twin, before any curtailment)",
         },
         {
           k: "VOLTAGE · MIN",
@@ -864,7 +865,7 @@ export default function App() {
     : [];
   const liveFrame: FlowFrame | undefined = row
     ? {
-            source: mode === "api" ? "live" : "saved",
+            source: mode === "api" ? "live" : "snapshot",
             ts: row.ts,
             transformer_id: row.transformer_id,
             solar_kw: row.solar_kw,
@@ -1208,8 +1209,8 @@ export default function App() {
                   title="Live grid"
                   sub={
                     frame
-                      ? frame.source === "live"
-                        ? `Digital twin · ${clock(frame.ts)} IST · flows scale with real kW`
+                      ? frame.source === "live" || frame.source === "snapshot"
+                        ? `${frame.source === "live" ? "Digital twin" : "Saved twin snapshot"} · ${clock(frame.ts)} IST · flows scale with real kW`
                         : `${frame.source === "saved" ? "Saved scenario" : "Scenario replay"} · ${clock(frame.ts)} IST · counterfactual day`
                       : "Waiting for telemetry"
                   }

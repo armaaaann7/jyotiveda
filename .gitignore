@@ -51,3 +51,6 @@ dist/
 test-results/
 playwright-report/
 .cache/
+
+# git bundle used to import this history (safe to delete after import)
+*.bundle

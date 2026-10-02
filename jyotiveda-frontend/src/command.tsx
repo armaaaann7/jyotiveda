@@ -133,7 +133,8 @@ export function TelemetryRail({ tiles }: { tiles: Tile[] }) {
 /* ------------------------------------------------------------------ grid flow ------------ */
 
 export interface FlowFrame {
-  source: "live" | "replay" | "saved";
+  /** live = connected twin telemetry · snapshot = saved telemetry (preview) · replay/saved = scenario timeline */
+  source: "live" | "snapshot" | "replay" | "saved";
   ts: string;
   transformer_id: string;
   solar_kw: number;
@@ -237,6 +238,9 @@ export function GridFlow({ f }: { f: FlowFrame }) {
   const load = f.loading_pct ?? 0;
   const ring = 2 * Math.PI * 30;
   const stressed = ["HIGH", "CRITICAL"].includes(f.risk_level || "") || (gp ?? 0) >= 0.5;
+  // Live telemetry reports unconstrained net import need; flag when it is above the upstream cap.
+  const overCap = f.grid_kw > f.grid_cap_kw + 0.5;
+  const isScenario = f.source === "replay" || f.source === "saved";
   return (
     <svg viewBox="0 0 1000 470" className="gridflow" role="img"
       aria-label={`Power flow for ${f.transformer_id}: solar ${fmt(f.solar_kw)} kW, grid ${fmt(f.grid_kw)} kW, battery ${fmt(f.battery_kw)} kW, demand ${fmt(f.demand_kw)} kW`}>
@@ -293,11 +297,21 @@ export function GridFlow({ f }: { f: FlowFrame }) {
         </text>
       </Node>
       {/* upstream */}
-      <Node x={750} y={52} w={220} h={80} label="UPSTREAM FEEDER · IMPORT" color={C.cyan}>
+      <Node x={750} y={52} w={220} h={overCap ? 102 : 80} label={isScenario ? "UPSTREAM · DISPATCHED" : "UPSTREAM · IMPORT NEED"} color={overCap ? C.danger : C.cyan}>
+        <title>
+          {!isScenario
+            ? "Live twin: demand − solar − battery at this slot (fleet.py live_state). This is the import the transformer would need; the upstream supply cap is applied by the operating plan, not by this telemetry projection."
+            : "Simulator: grid power actually dispatched in this slot (respects the supply cap)."}
+        </title>
         <text x="16" y="56" className="n-val"><tspan key={`g${fmt(f.grid_kw)}`} className="pulse">{fmt(f.grid_kw)}</tspan><tspan className="n-unit"> kW</tspan></text>
-        <text x="204" y="56" textAnchor="end" className="n-tiny" fill={f.grid_kw > f.grid_cap_kw + 0.5 ? C.danger : undefined}>
-          {f.grid_kw > f.grid_cap_kw + 0.5 ? "OVER " : ""}LIMIT {fmt(f.grid_cap_kw, 0)}
+        <text x="204" y="56" textAnchor="end" className="n-tiny" fill={overCap ? C.danger : undefined}>
+          CAP {fmt(f.grid_cap_kw, 0)} kW
         </text>
+        {overCap && (
+          <text x="16" y="86" className="n-tiny" fill={C.danger}>
+            NEED EXCEEDS SUPPLY CAP BY {fmt(f.grid_kw - f.grid_cap_kw)} kW
+          </text>
+        )}
       </Node>
       {/* battery */}
       <Node x={30} y={340} w={220} h={96} label="COMMUNITY BATTERY" color={C.battery}>
@@ -328,7 +342,7 @@ export function GridFlow({ f }: { f: FlowFrame }) {
       {/* homes */}
       <Node x={680} y={300} w={290} h={150} label={`HOMES · ${f.homes_total}`} color={C.energy}>
         <text x="274" y="22" textAnchor="end" className="n-tiny">
-          SERVED {fmt(served)} / {fmt(f.demand_kw)} kW
+          {f.served_kw == null ? `DEMAND ${fmt(f.demand_kw)} kW` : `SERVED ${fmt(served)} / ${fmt(f.demand_kw)} kW`}
         </text>
         {Array.from({ length: cells }, (_, i) => (
           <rect key={i} x={16 + (i % 15) * 17.5} y={36 + Math.floor(i / 15) * 15} width="12" height="9" rx="1.5"
@@ -367,12 +381,11 @@ export function StepList({ steps }: { steps: Step[] }) {
   return (
     <ol className="steps">
       {steps.map((s) => (
-        <li key={s.k} className={s.state} style={s.state === "done" ? { animationDelay: `${reveal++ * 70}ms` } : undefined}>
+        <li key={s.k} className={s.state} style={s.state === "done" ? { animationDelay: `${reveal++ * 70}ms` } : undefined}
+          title={typeof s.detail === "string" ? `${s.label}: ${s.detail}` : undefined}>
           <span className="step-i">{stepIcon(s.state)}</span>
-          <div>
-            <strong>{s.label}</strong>
-            {s.detail && <small>{s.detail}</small>}
-          </div>
+          <strong>{s.label}</strong>
+          {s.detail && <small>{s.detail}</small>}
         </li>
       ))}
     </ol>
