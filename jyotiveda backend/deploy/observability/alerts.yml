@@ -1,0 +1,41 @@
+groups:
+  - name: jyotiveda-reliability
+    rules:
+      - alert: CriticalLoadAtRisk
+        expr: min by (transformer) (jyotiveda_critical_protected_ratio) < 0.99
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Lifeline/critical load protection below 99% on {{ $labels.transformer }}"
+          runbook: docs/runbooks/critical-load.md
+      - alert: ReliabilityGapHigh
+        expr: jyotiveda_reliability_gap_kwh > 150
+        for: 15m
+        labels: { severity: warn }
+        annotations: { summary: "P90 reliability gap > 150 kWh on {{ $labels.transformer }} — pre-position DR" }
+  - name: jyotiveda-safety
+    rules:
+      - alert: ShieldViolationSpike
+        expr: sum by (rule) (rate(jyotiveda_shield_violations_total[15m])) > 0.05
+        for: 10m
+        labels: { severity: warn }
+        annotations: { summary: "Safety shield rule {{ $labels.rule }} firing often — AI proposals drifting unsafe" }
+      - alert: DispatchFailures
+        expr: sum(rate(jyotiveda_dispatch_transitions_total{to_state="FAILED"}[30m])) > 0
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "Dispatch commands failing verification — check edge/PCS" }
+  - name: jyotiveda-ml
+    rules:
+      - alert: DegradedModeActive
+        expr: sum by (component) (increase(jyotiveda_fallback_activations_total[1h])) > 3
+        labels: { severity: warn }
+        annotations: { summary: "{{ $labels.component }} repeatedly falling back — model or dependency unhealthy" }
+      - alert: MPCSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(jyotiveda_mpc_solve_seconds_bucket[30m]))) > 5
+        labels: { severity: warn }
+        annotations: { summary: "MPC p95 solve time > 5 s" }
+      - alert: ControlCycleSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(jyotiveda_control_cycle_seconds_bucket[1h]))) > 60
+        labels: { severity: page }
+        annotations: { summary: "Control cycle p95 > 60 s — 15-min loop at risk" }

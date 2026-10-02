@@ -1,0 +1,74 @@
+{{- range $cell := .Values.cells }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jyotiveda-{{ $cell.name }}
+  labels:
+    {{- include "jyotiveda.labels" $ | nindent 4 }}
+    jyotiveda.io/cell: {{ $cell.name }}
+spec:
+  replicas: 1                 # single writer per cell (owns its transformers' control loop)
+  strategy: { type: Recreate }  # never two controllers for the same DT
+  selector:
+    matchLabels: { app.kubernetes.io/name: jyotiveda, jyotiveda.io/cell: {{ $cell.name }} }
+  template:
+    metadata:
+      labels:
+        {{- include "jyotiveda.labels" $ | nindent 8 }}
+        jyotiveda.io/cell: {{ $cell.name }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      serviceAccountName: jyotiveda
+      automountServiceAccountToken: false
+      {{- include "jyotiveda.podSecurity" $ | nindent 6 }}
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway,
+            labelSelector: { matchLabels: { app.kubernetes.io/name: jyotiveda } } }
+      containers:
+        - name: jyotiveda
+          image: {{ include "jyotiveda.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: ["jyotiveda", "serve", "--host", "0.0.0.0", "--port", "8000"]
+          ports: [{ name: http, containerPort: 8000 }]
+          env:
+            - { name: JYOTIVEDA_ROLE, value: all }
+            - { name: JYOTIVEDA_CELL_ID, value: {{ $cell.name | quote }} }
+            - { name: JYOTIVEDA_FLEET_SHARD, value: {{ $cell.shard | toJson | quote }} }
+            {{- range $k, $v := $.Values.env }}
+            - { name: {{ $k }}, value: {{ $v | quote }} }
+            {{- end }}
+          envFrom:
+            - secretRef: { name: jyotiveda-secrets }
+          {{- include "jyotiveda.containerSecurity" $ | nindent 10 }}
+          resources: {{- toYaml $.Values.resources | nindent 12 }}
+          readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 15, failureThreshold: 4 }
+          startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5, failureThreshold: 60 }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: signing-key, mountPath: /var/run/secrets/jyotiveda, readOnly: true }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 1Gi } }
+        - name: signing-key
+          secret: { secretName: jyotiveda-signing-key, defaultMode: 0400 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jyotiveda-{{ $cell.name }}
+  labels: {{- include "jyotiveda.labels" $ | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: jyotiveda, jyotiveda.io/cell: {{ $cell.name }} }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jyotiveda-{{ $cell.name }}
+spec:
+  maxUnavailable: 0   # voluntary evictions wait; edge gateways cover any unplanned gap autonomously
+  selector: { matchLabels: { jyotiveda.io/cell: {{ $cell.name }} } }
+{{- end }}

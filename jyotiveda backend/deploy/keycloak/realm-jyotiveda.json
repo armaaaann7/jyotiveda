@@ -1,0 +1,38 @@
+{
+  "realm": "jyotiveda",
+  "enabled": true,
+  "sslRequired": "external",
+  "roles": {
+    "realm": [
+      { "name": "SUPER_ADMIN" }, { "name": "DISCOM_ADMIN" }, { "name": "DISCOM_OPERATOR" },
+      { "name": "URJA_SAKHI" }, { "name": "FIELD_ENGINEER" }, { "name": "RESIDENT" }, { "name": "ANALYST" }, { "name": "SERVICE" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "jyotiveda-command-centre",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "protocolMappers": [
+        { "name": "aud", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.custom.audience": "jyotiveda-api", "access.token.claim": "true" } }
+      ]
+    },
+    {
+      "clientId": "jyotiveda-control-loop",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "secret": "change-me-in-vault"
+    }
+  ],
+  "users": [
+    { "username": "je.hadapsar", "enabled": true, "realmRoles": ["DISCOM_OPERATOR"],
+      "credentials": [{ "type": "password", "value": "demo", "temporary": true }] },
+    { "username": "lata.sakhi", "enabled": true, "realmRoles": ["URJA_SAKHI"],
+      "credentials": [{ "type": "password", "value": "demo", "temporary": true }] }
+  ]
+}

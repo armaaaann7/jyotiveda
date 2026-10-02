@@ -1,0 +1,56 @@
+image:
+  repository: ghcr.io/jyotiveda/jyotiveda
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+  # verified by the admission controller (Kyverno/sigstore policy-controller) — images are cosign-signed in CI
+  digest: ""
+
+# Cell-based architecture: each cell owns a shard of transformers and runs the full closed loop
+# (twin, forecast, budget, MPC, shield, dispatch) for them. Cells fail independently; a DISCOM circle
+# scales by adding cells, not by growing one cluster-wide brain.
+cells:
+  - name: cell-a
+    shard: ["DT-101", "DT-102", "DT-103", "DT-104"]
+  - name: cell-b
+    shard: ["DT-105", "DT-106", "DT-107", "DT-108"]
+
+env:
+  JYOTIVEDA_ENV: prod
+  JYOTIVEDA_EVENT_BUS: kafka
+  JYOTIVEDA_KAFKA_BOOTSTRAP: jyotiveda-kafka-bootstrap:9092
+  JYOTIVEDA_MQTT_HOST: emqx.jyotiveda-edge.svc
+  JYOTIVEDA_AUTH_MODE: oidc
+  JYOTIVEDA_OIDC_ISSUER: https://id.discom.example/realms/jyotiveda
+  JYOTIVEDA_OTLP_ENDPOINT: http://otel-collector.observability:4317
+  JYOTIVEDA_CONTROL_LOOP_ENABLED: "true"
+  JYOTIVEDA_FORECAST_BACKEND: auto
+  JYOTIVEDA_LLM_MODEL: claude-opus-5-5
+  JYOTIVEDA_COMMAND_SIGNING_KEY_PATH: /var/run/secrets/jyotiveda/dispatch_ed25519.pem
+
+secrets:
+  # synced from Vault / AWS Secrets Manager by External Secrets Operator
+  externalSecretStore: vault-backend
+  keys:
+    - { name: JYOTIVEDA_DATABASE_URL, remoteKey: jyotiveda/prod/database_url }
+    - { name: JYOTIVEDA_ANTHROPIC_API_KEY, remoteKey: jyotiveda/prod/anthropic_api_key }
+    - { name: JYOTIVEDA_REDIS_URL, remoteKey: jyotiveda/prod/redis_url }
+  signingKeyRemoteKey: jyotiveda/prod/dispatch_ed25519_pem
+
+resources:
+  requests: { cpu: "1", memory: 2Gi }
+  limits: { cpu: "4", memory: 6Gi }
+
+ingress:
+  enabled: true
+  className: nginx
+  host: api.jyotiveda.example
+  tlsSecret: jyotiveda-tls
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # WebSocket live stream
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+
+backtest:
+  schedule: "15 2 * * *"   # nightly forecast backtest + promotion gate (IST 07:45)
+
+serviceMonitor: { enabled: true }
+networkPolicy: { enabled: true }

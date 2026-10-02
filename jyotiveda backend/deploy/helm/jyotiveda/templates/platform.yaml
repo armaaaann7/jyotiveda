@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jyotiveda
+  labels: {{- include "jyotiveda.labels" . | nindent 4 }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: jyotiveda-secrets
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { name: {{ .Values.secrets.externalSecretStore }}, kind: ClusterSecretStore }
+  target: { name: jyotiveda-secrets }
+  data:
+    {{- range .Values.secrets.keys }}
+    - secretKey: {{ .name }}
+      remoteRef: { key: {{ .remoteKey }} }
+    {{- end }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: jyotiveda-signing-key
+spec:
+  refreshInterval: 24h
+  secretStoreRef: { name: {{ .Values.secrets.externalSecretStore }}, kind: ClusterSecretStore }
+  target: { name: jyotiveda-signing-key }
+  data:
+    - secretKey: dispatch_ed25519.pem
+      remoteRef: { key: {{ .Values.secrets.signingKeyRemoteKey }} }
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jyotiveda
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls: [{ hosts: [{{ .Values.ingress.host }}], secretName: {{ .Values.ingress.tlsSecret }} }]
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          {{- range .Values.cells }}
+          - path: /cells/{{ .name }}(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend: { service: { name: jyotiveda-{{ .name }}, port: { number: 80 } } }
+          {{- end }}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jyotiveda-default-deny
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: jyotiveda } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+      ports: [{ port: 8000 }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { jyotiveda.io/data-plane: "true" } } }]   # Kafka, Timescale, Redis, EMQX
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } } }]
+    - ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - ports: [{ port: 443 }]   # IdP JWKS, Anthropic API, weather APIs — restrict via egress gateway in prod
+{{- end }}
+{{- if .Values.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jyotiveda
+spec:
+  selector: { matchLabels: { app.kubernetes.io/name: jyotiveda } }
+  endpoints: [{ port: http, path: /metrics, interval: 15s }]
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jyotiveda-forecast-backtest
+spec:
+  schedule: {{ .Values.backtest.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: jyotiveda
+          {{- include "jyotiveda.podSecurity" . | nindent 10 }}
+          containers:
+            - name: backtest
+              image: {{ include "jyotiveda.image" . }}
+              command: ["python", "-m", "jyotiveda.ml_backtest"]
+              envFrom: [{ secretRef: { name: jyotiveda-secrets } }]
+              {{- include "jyotiveda.containerSecurity" . | nindent 14 }}
+              volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          volumes: [{ name: tmp, emptyDir: {} }]

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: jyotiveda
+description: Jyotiveda — transformer-scale renewable reliability OS (cell-based deployment)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords: [energy, grid, discom, digital-twin, mpc, safety]
